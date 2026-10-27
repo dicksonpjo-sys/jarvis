@@ -197,7 +197,7 @@ function runTool(name, inp) {
 }
 async function askClaude(q, src) {
   if (!Brain.ready()) {
-    const what = Brain.cfg.provider === 'hermes' ? 'set up Hermes' : 'add your Claude API key';
+    const what = Brain.cfg.provider === 'hermes' ? 'set up Hermes' : Brain.cfg.provider === 'gemini' ? 'add your Gemini API key' : 'add your Claude API key';
     showReply(q, `<p>I need my AI brain for that: ${what} in <a href="#settings">Settings → AI brain</a>. Until then I can do: morning brief, idea, queue, approvals, open, search.</p>`, src);
     if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(`I need my AI brain for that. Please ${what} in settings.`);
     return;
@@ -205,9 +205,9 @@ async function askClaude(q, src) {
   thinking = true; showReply(q, `<p class="dim">Thinking with ${esc(Brain.currentName())}…</p>`, src);
   try {
     const r = await Brain.ask(q, { context: contextText(), tools: AI_TOOLS, runTool, usage: D.usage });
-    const who = r.provider === 'hermes' ? 'Hermes · ' + (r.model === 'hermes' ? 'its own model' : Brain.modelName(r.model)) : Brain.modelName(r.model);
+    const who = r.provider === 'gemini' ? Brain.modelName(r.model) : r.provider === 'hermes' ? 'Hermes · ' + (r.model === 'hermes' ? 'its own model' : Brain.modelName(r.model)) : Brain.modelName(r.model);
     log('Jarvis', `Answered with ${who} · ${r.inTok + r.outTok} tokens`); save();
-    const meta = r.provider === 'hermes' ? `${esc(who)} · free` : `${esc(who)} · about $${r.usd.toFixed(4)} · this month $${usd$(D.usage[Brain.month()]?.usd || 0)} of $${Brain.cfg.budgetUSD}`;
+    const meta = r.provider === 'gemini' ? `${esc(Brain.modelName(r.model))} · Gemini` : r.provider === 'hermes' ? `${esc(who)} · free` : `${esc(who)} · about $${r.usd.toFixed(4)} · this month $${usd$(D.usage[Brain.month()]?.usd || 0)} of $${Brain.cfg.budgetUSD}`;
     showReply(q, `<p>${esc(r.text).replace(/\n+/g, '</p><p>')}</p>${r.note ? `<p class="dim" style="font-size:12px">${esc(r.note)}</p>` : ''}<p class="dim" style="font-size:11.5px;margin-top:8px">${meta}</p>`, src);
     thinking = false;
     if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(r.text);
@@ -431,9 +431,9 @@ function vApprovals() {
 function phases() {
   const onPages = /github\.io$/.test(location.hostname);
   return [
-    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', Brain.claudeReady() || Brain.hermesReady() ? 1 : 0]] },
+    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', Brain.claudeReady() || Brain.hermesReady() || Brain.geminiReady() ? 1 : 0]] },
     { n: 'Prototype', items: [['Brain home', 1], ['Ideas', 1], ['Build tracker', 1], ['3 businesses', 1], ['Approvals', 1], ['Studio Hub', 1], ['Module plug', 1]] },
-    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1], ['Live mic visualizer', 1], ['Claude brain (choose model)', Brain.claudeReady() ? 1 : 0], ['Free models via Hermes', Brain.hermesReady() ? 1 : 0], ['Monthly AI budget guard', 1]] },
+    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1], ['Live mic visualizer', 1], ['Claude brain (choose model)', Brain.claudeReady() ? 1 : 0], ['Free models via Hermes', Brain.hermesReady() ? 1 : 0], ['Gemini brain', Brain.geminiReady() ? 1 : 0], ['Monthly AI budget guard', 1]] },
     { n: 'PC runner', items: [['Runner on studio PC', 0], ['Folder access', 0], ['Modules run commands', 0], ['Offline wake word', 0], ['Premium voice', 0]] },
     { n: 'Agents & cost', items: [['Planner', 0], ['Specialist agents', 0], ['Approval gateway', 0], ['Usage & budget', 0]] },
     { n: 'Expansion', items: [['VishwaaFX real module', 0], ['Coorgified module', 0], ['Taarora module', 0], ['Shared skills', 0]] }
@@ -467,9 +467,18 @@ function vSettings() {
     ${micPerm === 'denied' ? '<p class="dim" style="font-size:12.5px;margin:10px 0 0">The browser has blocked the mic for this site. Click the lock or tune icon left of the address, set <b>Microphone</b> to Allow, then reload.</p>' : '<p class="dim" style="font-size:12.5px;margin:10px 0 0">Talk while the check runs: the wave and bar should move. The same wave shows next to the mic button whenever Jarvis listens.</p>'}</section>
    <section class="card s6"><header><h2>AI brain</h2><span class="r pill ${Brain.ready() ? 'p-ok' : 'p-warn'}">${Brain.ready() ? 'ready' : 'not set up'}</span></header>
     <div class="set">
-     <label>Provider</label><div class="btns"><button class="btn ${Brain.cfg.provider === 'claude' ? 'go' : ''}" data-prov="claude">Claude (paid)</button><button class="btn ${Brain.cfg.provider === 'hermes' ? 'go' : ''}" data-prov="hermes">Hermes · NVIDIA (free)</button></div>
+     <label>Provider</label><div class="btns"><button class="btn ${Brain.cfg.provider === 'claude' ? 'go' : ''}" data-prov="claude">Claude (paid)</button><button class="btn ${Brain.cfg.provider === 'gemini' ? 'go' : ''}" data-prov="gemini">Gemini (free tier)</button><button class="btn ${Brain.cfg.provider === 'hermes' ? 'go' : ''}" data-prov="hermes">Hermes · NVIDIA (free)</button></div>
     </div>
-    ${Brain.cfg.provider === 'hermes' ? `
+    ${Brain.cfg.provider === 'gemini' ? (() => { const list = Brain.cfg.geminiList?.length ? Brain.cfg.geminiList : Brain.GEMINI_MODELS; const has = list.some(m => m.id === Brain.cfg.geminiModel); return `
+    <div class="set" style="margin-top:12px">
+     <label for="gModel">Model</label><div style="display:flex;gap:6px;min-width:0"><select class="in" id="gModel" style="flex:1;min-width:0">${has ? '' : `<option value="${esc(Brain.cfg.geminiModel)}" selected>${esc(Brain.cfg.geminiModel)}</option>`}${list.map(m => `<option value="${esc(m.id)}" ${Brain.cfg.geminiModel === m.id ? 'selected' : ''}>${esc(m.name)}${m.name !== m.id ? ' · ' + esc(m.id) : ''}</option>`).join('')}</select><button class="btn sm" id="gLoad" type="button" ${Brain.geminiReady() ? '' : 'disabled'}>Load models</button></div>
+     <span></span><span class="dim" style="font-size:12px">${esc((Brain.GEMINI_MODELS.find(m => m.id === Brain.cfg.geminiModel) || { note: Brain.cfg.geminiList?.length ? 'From your key\'s live model list.' : '' }).note)}</span>
+     <label for="gKey">Gemini API key</label><div class="field"><input id="gKey" type="password" autocomplete="off" spellcheck="false" placeholder="${Brain.geminiReady() ? '•••• saved on this device' : 'AIza…'}" aria-label="Gemini API key"><button class="btn sm" id="gKeySave" type="button">Save</button></div>
+     <label>If Gemini fails</label><button class="tog" id="hFall" aria-pressed="${!!Brain.cfg.fallback}">Let Claude answer instead${Brain.claudeReady() ? '' : ' (needs a Claude key)'}<span class="sw"></span></button>
+    </div>
+    <div class="btns" style="margin-top:14px"><button class="btn go" id="gTest" ${Brain.geminiReady() ? '' : 'disabled'}>Test Gemini</button><button class="btn" id="aiForget">New conversation</button>${Brain.geminiReady() ? '<button class="btn no" id="gKeyDel">Remove key</button>' : ''}</div>
+    <p class="dim" style="font-size:12px;margin:12px 0 0">Get a free key at aistudio.google.com → Get API key. Flash models are free within Google's daily limits; Pro needs billing. On the free tier Google may use what you send to improve its products, so keep private business details for Claude. The key stays in this browser only. Gemini answers this month: ${(D.usage[Brain.month()]?.gemini || 0)}.</p>`; })()
+    : Brain.cfg.provider === 'hermes' ? `
     <div class="set" style="margin-top:12px">
      <label for="hModel">Model</label><select class="in" id="hModel">${Brain.HERMES_MODELS.map(m => `<option value="${m.id}" ${Brain.cfg.hermesModel === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}<option value="custom" ${Brain.cfg.hermesModel === 'custom' ? 'selected' : ''}>Another NVIDIA model…</option></select>
      <span></span><span class="dim" style="font-size:12px">${esc((Brain.HERMES_MODELS.find(m => m.id === Brain.cfg.hermesModel) || { note: 'Type the model ID from build.nvidia.com, e.g. vendor/model-name.' }).note)}</span>
@@ -560,6 +569,10 @@ document.addEventListener('click', e => {
   if (t.closest('#spkBtn')) { setVoice({ speak: !Voice.cfg.speak }); return; }
   if (t.closest('#micChk')) { Voice.micCheck(!Voice.checking).then(() => { refreshPerm(); }); setTimeout(render, 50); return; }
   if (el = t.closest('[data-prov]')) { Brain.save({ provider: el.dataset.prov }); Brain.forget(); log('You', 'AI brain → ' + (el.dataset.prov === 'hermes' ? 'Hermes (free)' : 'Claude')); save(); render(); return; }
+  if (t.closest('#gKeySave')) { const k = $('#gKey').value.trim(); if (!/^AIza[\w-]{20,}$/.test(k)) { toast('That doesn\'t look like a Gemini key (it starts with AIza).', true); return; } Brain.save({ geminiKey: k }); log('You', 'Added a Gemini API key on this device'); save(); render(); toast('Gemini key saved on this device'); Brain.geminiModels().then(() => render()).catch(() => {}); return; }
+  if (t.closest('#gKeyDel')) { Brain.save({ geminiKey: '', geminiList: [] }); render(); toast('Gemini key removed from this device'); return; }
+  if (t.closest('#gLoad')) { Brain.geminiModels().then(l => { toast(l.length + ' Gemini models available on your key'); render(); }).catch(e => toast(e.message, true)); return; }
+  if (t.closest('#gTest')) { const b = $('#gTest'); b.disabled = true; b.textContent = 'Testing…'; Brain.geminiTest().then(x => { toast('Gemini says: ' + (x.reply || 'ok')); Voice.speak(x.reply || 'Gemini is online.', { force: true }); }).catch(e => toast(e.message, true)).finally(() => render()); return; }
   if (t.closest('#hKeySave')) { const k = $('#hKey').value.trim(); if (k.length < 12) { toast('The key looks too short. Use the same value as API_SERVER_KEY in Hermes.', true); return; } Brain.save({ hermesKey: k }); render(); toast('Hermes key saved on this device'); return; }
   if (t.closest('#hMake')) { hermesGuide(Brain.makeKey()); return; }
   if (t.closest('#hGuide')) { hermesGuide(null); return; }
@@ -591,6 +604,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'vLang') setVoice({ lang: t.value });
+  if (t.id === 'gModel') { Brain.save({ geminiModel: t.value }); Brain.forget(); log('You', 'Gemini model → ' + t.value); save(); render(); toast('Now using ' + Brain.modelName(t.value)); }
   if (t.id === 'hModel') { Brain.save({ hermesModel: t.value }); Brain.forget(); render(); }
   if (t.id === 'hCustom') Brain.save({ hermesCustom: t.value.trim() });
   if (t.id === 'hUrl') Brain.save({ hermesUrl: t.value.trim() || 'http://127.0.0.1:8642' });

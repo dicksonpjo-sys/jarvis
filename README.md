@@ -1,4 +1,4 @@
-# Jarvis v1.2.0
+# Jarvis v1.3.0
 
 Dickson's personal AI operating system. A web app you install on PC and phone; everything it knows is saved in your Google Drive.
 
@@ -16,6 +16,14 @@ Dickson's personal AI operating system. A web app you install on PC and phone; e
   - Jarvis answers aloud. Choose the voice, speed and pitch in Settings.
   - Works in Chrome and Edge on PC and Android. iPhone can type and hear replies.
 - **Google Drive**: My Drive / Jarvis / `jarvis_data.json`, plus a daily copy in Jarvis / Backups / month. Every device that signs in sees the same data.
+
+## New in 1.3: Gemini brain
+- Settings → AI brain → **Gemini (free tier)**. Get a key at aistudio.google.com → Get API key (starts with `AIza`).
+- Called straight from the browser; the key stays on the device.
+- **Load models** reads the live list of models your key can use. The defaults are Gemini 3.6 Flash, 3.8 Flash, 3.5 Flash-Lite (all free tier) and 3.1 Pro preview (paid).
+- Gemini can save ideas, queue tasks and open pages through function calls.
+- Optional fallback: if Gemini fails, Claude answers instead.
+- On the free tier Google may use prompts to improve its products.
 
 ## New in 1.2: free models through Hermes
 - Settings → AI brain → **Provider**: Claude (paid) or **Hermes · NVIDIA (free)**.

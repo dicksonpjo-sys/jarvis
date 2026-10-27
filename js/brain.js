@@ -22,16 +22,24 @@ const Brain = (() => {
     { id: 'deepseek-ai/deepseek-v4-flash', name: 'DeepSeek V4 Flash (NVIDIA, free)', note: 'Quick replies, light on the free rate limit.' },
     { id: 'z-ai/glm-5.1', name: 'GLM 5.1 (NVIDIA, free)', note: 'Stronger reasoning; free tier often times out.' }
   ];
-  const cfg = Object.assign({ provider: 'claude', apiKey: '', model: 'claude-haiku-5-5', budgetUSD: 5, usdToInr: 84, rates: RATES,
+  /* Google Gemini: called straight from the browser with an AI Studio key. Free tier covers the Flash models. */
+  const GEMINI_MODELS = [
+    { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', note: 'Free tier. Fast; good everyday brain.' },
+    { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', note: 'Free tier. Newest Flash.' },
+    { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', note: 'Free tier. Lightest and quickest.' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (preview)', note: 'Paid only. Needs billing on your Google AI Studio project.' }
+  ];
+  const cfg = Object.assign({ provider: 'claude', geminiKey: '', geminiModel: 'gemini-3.6-flash', geminiList: [], apiKey: '', model: 'claude-haiku-5-5', budgetUSD: 5, usdToInr: 84, rates: RATES,
     hermesUrl: 'http://127.0.0.1:8642', hermesKey: '', hermesModel: '', hermesCustom: '', hermesProvider: 'nvidia', fallback: true }, ls.get(KEY, {}));
   cfg.rates = { ...RATES, ...(cfg.rates || {}) };
   function save(c) { Object.assign(cfg, c); ls.set(KEY, cfg); }
   const claudeReady = () => !!cfg.apiKey;
   const hermesReady = () => !!cfg.hermesKey;
-  const ready = () => cfg.provider === 'hermes' ? hermesReady() : claudeReady();
+  const geminiReady = () => !!cfg.geminiKey;
+  const ready = () => cfg.provider === 'hermes' ? hermesReady() : cfg.provider === 'gemini' ? geminiReady() : claudeReady();
   const hermesModelId = () => (cfg.hermesModel === 'custom' ? cfg.hermesCustom.trim() : cfg.hermesModel);
-  const modelName = id => (MODELS.find(m => m.id === id) || HERMES_MODELS.find(m => m.id && m.id === id) || { name: id || 'Hermes' }).name;
-  const currentName = () => cfg.provider === 'hermes' ? 'Hermes · ' + (hermesModelId() ? modelName(hermesModelId()) : 'its own model') : modelName(cfg.model);
+  const modelName = id => (MODELS.find(m => m.id === id) || GEMINI_MODELS.find(m => m.id === id) || (cfg.geminiList || []).find(m => m.id === id) || HERMES_MODELS.find(m => m.id && m.id === id) || { name: id || 'Hermes' }).name;
+  const currentName = () => cfg.provider === 'gemini' ? modelName(cfg.geminiModel) : cfg.provider === 'hermes' ? 'Hermes · ' + (hermesModelId() ? modelName(hermesModelId()) : 'its own model') : modelName(cfg.model);
   const month = () => new Date().toISOString().slice(0, 7);
   const cost = (model, inTok, outTok) => { const r = cfg.rates[model] || [5, 25]; return (inTok * r[0] + outTok * r[1]) / 1e6; };
 
@@ -58,6 +66,17 @@ const Brain = (() => {
      usage: object kept in Jarvis data ({ 'YYYY-MM': {in, out, usd, calls} }) so the budget follows you across devices. */
   async function ask(text, opts) {
     const { usage } = opts; const m = month(); usage[m] = usage[m] || { in: 0, out: 0, usd: 0, calls: 0 };
+    if (cfg.provider === 'gemini') {
+      if (!geminiReady()) throw Object.assign(new Error('Add your Gemini API key in Settings → AI brain first.'), { code: 'NOKEY' });
+      try {
+        const r = await askGemini(text, { system: systemPrompt(opts.context), runTool: opts.runTool, tools: opts.tools });
+        Object.assign(usage[m], { in: usage[m].in + r.inTok, out: usage[m].out + r.outTok, calls: usage[m].calls + 1, gemini: (usage[m].gemini || 0) + 1 });
+        return { ...r, model: cfg.geminiModel, provider: 'gemini', usd: 0 };
+      } catch (e) {
+        if (!(cfg.fallback && claudeReady())) throw e;
+        const r = await askClaude(text, opts); r.note = 'Gemini failed (' + e.message.split('.')[0] + '), so Claude answered.'; return r;
+      }
+    }
     if (cfg.provider === 'hermes') {
       if (!hermesReady()) throw Object.assign(new Error('Set up Hermes in Settings → AI brain first.'), { code: 'NOKEY' });
       try {
@@ -107,7 +126,62 @@ ${context}`;
     const r = await call({ model: cfg.model, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with exactly: Jarvis brain online.' }] });
     return (r.content || []).map(b => b.text || '').join('').trim();
   }
-  function forget() { history = []; hHistory = []; }
+  function forget() { history = []; hHistory = []; gHistory = []; }
+
+  /* ---------- Gemini ---------- */
+  let gHistory = [];
+  const GURL = 'https://generativelanguage.googleapis.com/v1beta';
+  const toSchema = sc => { if (!sc || typeof sc !== 'object') return sc; const o = {}; for (const [k, v] of Object.entries(sc)) { if (k === 'type') o.type = String(v).toUpperCase(); else if (k === 'properties') o.properties = Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, toSchema(pv)])); else if (k === 'items') o.items = toSchema(v); else o[k] = v; } return o; };
+  async function gCall(path, body) {
+    let res;
+    try { res = await fetch(GURL + path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-goog-api-key': cfg.geminiKey }, body: body ? JSON.stringify(body) : undefined }); }
+    catch { throw new Error('Couldn\'t reach Gemini. Check the internet connection.'); }
+    if (!res.ok) { let m = ''; try { m = (await res.json()).error?.message || ''; } catch {}
+      if (res.status === 400 && /API key/i.test(m)) throw new Error('Google rejected the Gemini key. Check it in Settings → AI brain.');
+      if (res.status === 403) throw new Error('This Gemini key isn\'t allowed to use that. ' + m);
+      if (res.status === 404) throw new Error(`The model "${cfg.geminiModel}" isn't available on this key. Press “Load models” and pick another.`);
+      if (res.status === 429) throw new Error('Gemini\'s free limit was hit. Wait a minute, or try a Flash-Lite model.');
+      throw new Error('Gemini error ' + res.status + (m ? ': ' + m.slice(0, 160) : '')); }
+    return res.json();
+  }
+  async function askGemini(text, { system, runTool, tools }) {
+    gHistory.push({ role: 'user', parts: [{ text }] }); gHistory = gHistory.slice(-16);
+    while (gHistory.length && (gHistory[0].role !== 'user' || gHistory[0].parts.some(p => p.functionResponse))) gHistory.shift();
+    const decl = (tools || []).map(t => ({ name: t.name, description: t.description, parameters: toSchema(t.input_schema) }));
+    let contents = [...gHistory], out = '', inTok = 0, outTok = 0;
+    for (let round = 0; round < 4; round++) {
+      const r = await gCall(`/models/${encodeURIComponent(cfg.geminiModel)}:generateContent`, {
+        systemInstruction: { parts: [{ text: system }] }, contents,
+        tools: decl.length ? [{ functionDeclarations: decl }] : undefined,
+        generationConfig: { maxOutputTokens: 800, temperature: 0.6 } });
+      inTok += r.usageMetadata?.promptTokenCount || 0; outTok += r.usageMetadata?.candidatesTokenCount || 0;
+      const c = r.candidates?.[0];
+      if (!c?.content) { const why = c?.finishReason || r.promptFeedback?.blockReason || 'no answer'; throw new Error('Gemini gave no answer (' + why + ').'); }
+      const parts = c.content.parts || [];
+      const said = parts.filter(p => p.text && !p.thought).map(p => p.text).join(' ').trim();
+      if (said) out = said;
+      contents.push({ role: 'model', parts });
+      const calls = parts.filter(p => p.functionCall);
+      if (!calls.length) break;
+      contents.push({ role: 'user', parts: calls.map(p => { let res; try { res = runTool(p.functionCall.name, p.functionCall.args || {}); } catch (e) { res = 'Error: ' + e.message; } return { functionResponse: { name: p.functionCall.name, response: { result: String(res) } } }; }) });
+    }
+    gHistory = contents.slice(-16);
+    return { text: out || 'Done.', inTok, outTok };
+  }
+  async function geminiModels() {
+    const r = await gCall('/models?pageSize=200');
+    const list = (r.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name) && !/embedding|image|tts|audio|live|vision/i.test(m.name))
+      .map(m => ({ id: m.name.replace(/^models\//, ''), name: m.displayName || m.name.replace(/^models\//, '') }))
+      .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
+    save({ geminiList: list });
+    return list;
+  }
+  async function geminiTest() {
+    const list = await geminiModels();
+    if (list.length && !list.some(m => m.id === cfg.geminiModel)) throw new Error(`Connected, but "${cfg.geminiModel}" isn't on this key. Pick one from the list.`);
+    const r = await gCall(`/models/${encodeURIComponent(cfg.geminiModel)}:generateContent`, { contents: [{ role: 'user', parts: [{ text: 'Reply with exactly: Jarvis brain online.' }] }], generationConfig: { maxOutputTokens: 30 } });
+    return { reply: (r.candidates?.[0]?.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('').trim(), count: list.length };
+  }
 
   /* ---------- Hermes (OpenAI-style API on this PC) ---------- */
   let hHistory = [];
@@ -152,5 +226,5 @@ Do not run terminal commands, browse, or change files on this PC unless Dickson 
   }
   function makeKey() { const a = new Uint8Array(24); crypto.getRandomValues(a); return 'jv-' + [...a].map(b => b.toString(16).padStart(2, '0')).join(''); }
 
-  return { MODELS, HERMES_MODELS, RATES, cfg, save, ready, claudeReady, hermesReady, ask, test, hermesTest, makeKey, forget, modelName, currentName, hermesModelId, month, cost };
+  return { MODELS, HERMES_MODELS, GEMINI_MODELS, geminiReady, geminiTest, geminiModels, RATES, cfg, save, ready, claudeReady, hermesReady, ask, test, hermesTest, makeKey, forget, modelName, currentName, hermesModelId, month, cost };
 })();
