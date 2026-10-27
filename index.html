@@ -70,7 +70,7 @@
 
   <div class="breply" id="breply"></div>
   <div class="bdock">
-    <form class="cmdf" data-cmd autocomplete="off"><button type="button" class="mic" data-mic aria-label="Hold to talk"><svg><use href="#i-mic"/></svg></button><input placeholder="Ask Jarvis… “morning brief”, “idea: …”, “queue: …”" aria-label="Ask Jarvis"><button class="send" aria-label="Send"><svg width="17" height="17"><use href="#i-send"/></svg></button></form>
+    <form class="cmdf" data-cmd autocomplete="off"><button type="button" class="mic" data-mic aria-label="Hold to talk"><svg><use href="#i-mic"/></svg></button><canvas class="wv mini" aria-hidden="true"></canvas><input placeholder="Ask Jarvis… “morning brief”, “idea: …”, “queue: …”" aria-label="Ask Jarvis"><button class="send" aria-label="Send"><svg width="17" height="17"><use href="#i-send"/></svg></button></form>
     <button class="db" id="ideaBtn" aria-label="New idea" style="color:var(--amber)"><svg><use href="#i-idea"/></svg></button>
   </div>
 </section>
@@ -86,13 +86,14 @@
   </aside>
   <main id="main"></main>
 </div>
-<div class="wcmd" id="wcmd" hidden><div><div id="wreply"></div><form class="cmdf" data-cmd autocomplete="off"><button type="button" class="mic" data-mic aria-label="Hold to talk"><svg><use href="#i-mic"/></svg></button><input placeholder="Ask Jarvis…" aria-label="Ask Jarvis"><button class="send" aria-label="Send"><svg width="17" height="17"><use href="#i-send"/></svg></button></form></div></div>
+<div class="wcmd" id="wcmd" hidden><div><div id="wreply"></div><form class="cmdf" data-cmd autocomplete="off"><button type="button" class="mic" data-mic aria-label="Hold to talk"><svg><use href="#i-mic"/></svg></button><canvas class="wv mini" aria-hidden="true"></canvas><input placeholder="Ask Jarvis…" aria-label="Ask Jarvis"><button class="send" aria-label="Send"><svg width="17" height="17"><use href="#i-send"/></svg></button></form></div></div>
 <nav class="mnav" id="mnav" aria-label="Views" hidden></nav>
 
 <script src="js/config.js"></script>
 <script src="js/drive.js"></script>
 <script src="js/voice.js"></script>
 <script src="js/sample.js"></script>
+<script src="js/brain.js"></script>
 <script src="js/app.js"></script>
 <script>if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
 </body>

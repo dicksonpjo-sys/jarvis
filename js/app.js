@@ -35,11 +35,13 @@ function blank() {
       idea('Describe Taarora so Jarvis can set it up', 'taar')
     ],
     approvals: [],
+    usage: {},
     log: [{ id: uid(), at: t, who: 'Jarvis', what: 'Jarvis v1 set up on this device' }],
     meta: {}
   };
 }
 let D = LS.get(DKEY, null) || blank();
+D.usage = D.usage || {};
 const BIZ = () => D.businesses;
 const bizName = k => k === 'all' ? 'All businesses' : k === 'me' ? 'Personal' : (BIZ()[k]?.name || k);
 const bizCol = k => BIZ()[k]?.color || (k === 'all' ? '#3fc8e6' : '#ff5fa8');
@@ -60,6 +62,7 @@ function merge(local, remote) {
     for (const x of [...(remote[key] || []), ...(local[key] || [])]) m.set(x.id, byU(m.get(x.id), x));
     out[key] = [...m.values()].sort((a, b) => (a.c || '').localeCompare(b.c || ''));
   }
+  out.usage = { ...(remote.usage || {}) }; for (const [k, v] of Object.entries(local.usage || {})) if (!out.usage[k] || (v.calls || 0) >= (out.usage[k].calls || 0)) out.usage[k] = v;
   const lg = new Map(); for (const x of [...(remote.log || []), ...(local.log || [])]) lg.set(x.id, x);
   out.log = [...lg.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 300);
   return out;
@@ -144,7 +147,7 @@ function handle(raw, src = 'text') {
   let m, r;
   if (!q) return;
   if (/^(stop|quiet|shut up|cancel|silence)$/.test(s)) { Voice.stopSpeaking(); r = { html: '<p>Okay.</p>', say: '' }; }
-  else if (m = q.match(/^\s*(?:(idea|note|remember)\s*[:,-]?\s+|add (?:an )?idea\s*[:,-]?\s*)(.+)$/i)) { const b = findBiz(m[2].toLowerCase()) || curBiz(); const i = addIdea(m[2], b, 'idea'); r = { html: `<p>Saved to your ideas under <b>${esc(bizName(i.b))}</b>.</p>`, say: 'Saved.' }; }
+  else if (m = q.match(/^\s*(?:(idea|note|remember)\s*[:,-]?\s+(?:to\s+|that\s+)?|add (?:an )?idea\s*[:,-]?\s*)(.+)$/i)) { m[2] = m[2].replace(/^./, c => c.toUpperCase()); const b = findBiz(m[2].toLowerCase()) || curBiz(); const i = addIdea(m[2], b, 'idea'); r = { html: `<p>Saved to your ideas under <b>${esc(bizName(i.b))}</b>.</p>`, say: 'Saved.' }; }
   else if (m = q.match(/^\s*queue\s*[:,-]?\s+(.+)$/i)) { const b = findBiz(m[1].toLowerCase()) || curBiz(); const i = addIdea(m[1], b, 'queued'); r = { html: `<p>Queued under <b>${esc(bizName(i.b))}</b>. A plan approval is waiting for you.</p>`, say: 'Queued. It needs your approval before anything happens.' }; }
   else if (/^(hi|hello|hey)( jarvis)?$/.test(s)) r = { html: `<p>${greeting()}, Dickson.</p>`, say: `${greeting()}, Dickson.` };
   else if (/brief|morning|status|what'?s (up|new|happening)|catch me up|update me/.test(s)) r = brief();
@@ -166,13 +169,54 @@ function handle(raw, src = 'text') {
     else { log('Jarvis', `${c.say} → ${mm.name} · ${tool}`); save();
       r = { html: `<p>That's <b>${esc(tool)}</b> in ${esc(mm.name)}: ${esc(c.does)}. Jarvis can't run module commands yet (that arrives with the PC runner), so open the <a href="${esc(mm.dashboard)}" target="_blank" rel="noopener">dashboard ↗</a> for now. I've logged the request.</p>`, say: `That's ${tool} in ${mm.name}. I can't run module commands yet, so I've logged it. Open the dashboard for now.` }; }
   }
-  if (!r) { r = { html: `<p>I don't know how to do “${esc(q)}” yet. Say <b>idea:</b> to save it, or <b>queue:</b> to have it planned. Say <b>help</b> for what I can do.</p>`, say: `I can't do that yet. Say idea, then the thought, and I'll save it.` }; }
+  if (!r) { askClaude(q, src); return; }
   showReply(q, r.html, src);
   if (r.say && (src === 'voice' || Voice.cfg.speakTyped)) Voice.speak(r.say);
 }
+let thinking = false;
+const usd$ = v => v < 0.1 ? v.toFixed(3) : v.toFixed(2);
+function contextText() {
+  const now = new Date();
+  const lines = [`Now: ${now.toLocaleString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })} (India).`];
+  for (const [k, b] of Object.entries(BIZ())) { const m = mod(k); lines.push(`Business ${b.name} (id ${k}): ${b.desc || 'no description yet'}.` + (m ? ` Module ${m.name}${m.sample ? ' (SAMPLE numbers, not real)' : ''}: ${Object.entries(m.summary || {}).filter(([x]) => x !== 'as_of').map(([x, v]) => fmtK(x) + ' ' + fmtV(x, v)).join(', ')}. Tools: ${m.tools.map(t => t.name).join(', ')}.` : ' No dashboard module plugged in.')); }
+  const ideas = live(D.ideas).filter(i => i.st !== 'done').slice(-25);
+  lines.push('Open ideas: ' + (ideas.map(i => `"${i.t}" [${STAGES.find(s => s[0] === i.st)[1]}, ${bizName(i.b)}]`).join('; ') || 'none') + '.');
+  lines.push('Waiting for approval: ' + (pending().map(a => `"${a.title}" (${bizName(a.ws)})`).join('; ') || 'nothing') + '.');
+  return lines.join('\n');
+}
+const AI_TOOLS = [
+  { name: 'add_idea', description: 'Save an idea or note to Dickson\'s idea board.', input_schema: { type: 'object', properties: { text: { type: 'string', description: 'The idea, in a short sentence' }, business: { type: 'string', enum: ['vfx', 'coorg', 'taar', 'all', 'me'], description: 'Which business it is for; me = personal' } }, required: ['text'] } },
+  { name: 'queue_task', description: 'Queue a task for Jarvis. This creates a plan approval that Dickson must approve before anything happens.', input_schema: { type: 'object', properties: { text: { type: 'string' }, business: { type: 'string', enum: ['vfx', 'coorg', 'taar', 'all', 'me'] } }, required: ['text'] } },
+  { name: 'open_page', description: 'Open a page in Jarvis on Dickson\'s screen.', input_schema: { type: 'object', properties: { page: { type: 'string', enum: ['brain', 'me', 'vfx', 'coorg', 'taar', 'modules', 'approvals', 'build', 'settings'] } }, required: ['page'] } }
+];
+function runTool(name, inp) {
+  if (name === 'add_idea') { const i = addIdea(inp.text, inp.business || curBiz() || 'me', 'idea'); return `Saved idea under ${bizName(i.b)}.`; }
+  if (name === 'queue_task') { const i = addIdea(inp.text, inp.business || curBiz() || 'me', 'queued'); return `Queued under ${bizName(i.b)}; a plan approval is waiting for Dickson.`; }
+  if (name === 'open_page') { location.hash = inp.page; return 'Opened ' + inp.page; }
+  return 'Unknown tool';
+}
+async function askClaude(q, src) {
+  if (!Brain.ready()) {
+    showReply(q, `<p>I need my AI brain for that. Add your Claude API key in <a href="#settings">Settings → AI brain</a>. Until then I can do: morning brief, idea, queue, approvals, open, search.</p>`, src);
+    if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak('I need my AI brain for that. Add your Claude API key in settings.');
+    return;
+  }
+  thinking = true; showReply(q, `<p class="dim">Thinking with ${esc(Brain.modelName(Brain.cfg.model))}…</p>`, src);
+  try {
+    const r = await Brain.ask(q, { context: contextText(), tools: AI_TOOLS, runTool, usage: D.usage });
+    log('Jarvis', `Answered with ${Brain.modelName(r.model)} · ${r.inTok + r.outTok} tokens`); save();
+    showReply(q, `<p>${esc(r.text).replace(/\n+/g, '</p><p>')}</p><p class="dim" style="font-size:11.5px;margin-top:8px">${esc(Brain.modelName(r.model))} · about $${r.usd.toFixed(4)} · this month $${usd$(D.usage[Brain.month()]?.usd || 0)} of $${Brain.cfg.budgetUSD}</p>`, src);
+    thinking = false;
+    if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(r.text);
+  } catch (e) {
+    thinking = false;
+    showReply(q, `<p style="color:var(--red)">${esc(e.message)}</p>`, src);
+    if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(e.message);
+  }
+}
 function helpHtml() {
   const mc = Object.values(D.modules).flatMap(r => r?.m ? r.m.tools.flatMap(t => (t.commands || []).map(c => `<li><b>${esc(c.say)}</b> · ${esc(t.name)}${c.needs_approval ? ' (asks you first)' : ''}</li>`)) : []);
-  return `<p>Say “Hey Jarvis” first if wake mode is on, or hold the mic.</p><ul><li><b>morning brief</b> / status</li><li><b>idea:</b> … saves a thought · <b>queue:</b> … asks Jarvis to plan it</li><li><b>what needs approval</b></li><li><b>open</b> VishwaaFX / Coorgified / Taarora / ideas / approvals / settings</li><li><b>search</b> …</li><li><b>stop</b> to stop talking</li>${mc.join('')}</ul>`;
+  return `<p>Say “Hey Jarvis” first if wake mode is on, or hold the mic.</p><ul><li><b>morning brief</b> / status</li><li><b>idea:</b> … saves a thought · <b>queue:</b> … asks Jarvis to plan it</li><li><b>what needs approval</b></li><li><b>open</b> VishwaaFX / Coorgified / Taarora / ideas / approvals / settings</li><li><b>search</b> …</li><li><b>stop</b> to stop talking</li><li>Anything else goes to Claude (${esc(Brain.modelName(Brain.cfg.model))})${Brain.ready() ? '' : ' once you add an API key in Settings'}</li>${mc.join('')}</ul>`;
 }
 function showReply(q, html, src) {
   const out = `<div class="reply"><div class="who">JARVIS <span class="you">${src === 'voice' ? '🎙 ' : ''}“${esc(q)}”</span><button class="x" aria-label="Close" data-closereply>✕</button></div>${html}</div>`;
@@ -278,10 +322,31 @@ function orbLoop() {
   c.clearRect(0, 0, 340, 340); c.lineCap = 'round';
   const main = m === 'speaking' ? '#f2b33d' : m === 'ptt' ? '#3ee0c5' : m === 'wake' ? '#3ee0c5' : '#3fc8e6';
   [[150, 2, main, .55, ph], [134, 7, main, .16, -ph * .7], [120, 3.5, '#f2b33d', .62, ph * 1.25], [102, 1.5, '#3ee0c5', .4, -ph]].forEach(([r, lw, col, len, a]) => { c.strokeStyle = col; c.lineWidth = lw; c.globalAlpha = .9; c.beginPath(); c.arc(170, 170, r, a, a + Math.PI * 2 * len); c.stroke(); });
-  const lvl = m === 'ptt' ? Voice.level : m === 'speaking' ? .5 + .4 * Math.sin(ph * 6) : m === 'wake' ? .15 + .1 * Math.sin(ph * 2) : 0;
+  const lvl = (m === 'ptt' || m === 'wake' || Voice.checking) ? Voice.level : m === 'speaking' ? .5 + .4 * Math.sin(ph * 6) : thinking ? .3 + .2 * Math.sin(ph * 4) : 0;
   c.globalAlpha = .45; c.strokeStyle = main; c.lineWidth = 2;
   for (let i = 0; i < 72; i++) { const a = i / 72 * Math.PI * 2, l = 4 + lvl * (8 + Math.abs(Math.sin(ph * 3 + i)) * 16); c.beginPath(); c.moveTo(170 + Math.cos(a) * 158, 170 + Math.sin(a) * 158); c.lineTo(170 + Math.cos(a) * (158 + l), 170 + Math.sin(a) * (158 + l)); c.stroke(); }
-  c.globalAlpha = 1; requestAnimationFrame(orbLoop);
+  const wv = Voice.wave;
+  if (wv && (m === 'ptt' || m === 'wake' || Voice.checking)) { c.globalAlpha = .95; c.strokeStyle = '#3ee0c5'; c.lineWidth = 2.5; c.beginPath(); for (let i = 0; i < 64; i++) { const v = (wv[Math.floor(i * wv.length / 64)] - 128) / 128, x = 110 + i * (120 / 63), y = 170 + v * 70; i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke(); }
+  c.globalAlpha = 1;
+  drawWaves();
+  requestAnimationFrame(orbLoop);
+}
+/* Small waveforms next to every mic button, and the big one in Settings. */
+function drawWaves() {
+  const wv = Voice.wave, m = Voice.mode, active = !!wv && (m === 'ptt' || m === 'wake' || Voice.checking);
+  for (const cv of $$('canvas.wv')) {
+    if (!cv.offsetParent) continue;
+    const r = cv.getBoundingClientRect(), d = Math.min(devicePixelRatio || 1, 2);
+    if (cv.width !== Math.round(r.width * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+    const g = cv.getContext('2d'), w = cv.width, h = cv.height;
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = active ? (Voice.level > .05 ? '#3ee0c5' : '#57697a') : '#26384a'; g.lineWidth = 2 * d; g.beginPath();
+    const n = 96;
+    for (let i = 0; i < n; i++) { const v = active ? (wv[Math.floor(i * wv.length / n)] - 128) / 128 : 0, x = i * w / (n - 1), y = h / 2 + v * h * .9; i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+  const bar = $('#micBar'); if (bar) bar.style.width = Math.round((active ? Voice.level : 0) * 100) + '%';
+  const lbl = $('#micLevelLbl'); if (lbl) lbl.textContent = !active ? 'Not listening' : Voice.level > .05 ? 'Hearing you ✓' : 'Listening… speak to test';
 }
 
 /* ============ workspace views ============ */
@@ -363,10 +428,10 @@ function vApprovals() {
 function phases() {
   const onPages = /github\.io$/.test(location.hostname);
   return [
-    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', 0]] },
+    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', Brain.ready() ? 1 : 0]] },
     { n: 'Prototype', items: [['Brain home', 1], ['Ideas', 1], ['Build tracker', 1], ['3 businesses', 1], ['Approvals', 1], ['Studio Hub', 1], ['Module plug', 1]] },
-    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1]] },
-    { n: 'PC runner & AI brain', items: [['Runner on studio PC', 0], ['Folder access', 0], ['Claude answers questions', 0], ['Modules run commands', 0], ['Offline wake word', 0]] },
+    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1], ['Live mic visualizer', 1], ['Claude brain (choose model)', Brain.ready() ? 1 : 0], ['Monthly AI budget guard', 1]] },
+    { n: 'PC runner', items: [['Runner on studio PC', 0], ['Folder access', 0], ['Modules run commands', 0], ['Offline wake word', 0], ['Premium voice', 0]] },
     { n: 'Agents & cost', items: [['Planner', 0], ['Specialist agents', 0], ['Approval gateway', 0], ['Usage & budget', 0]] },
     { n: 'Expansion', items: [['VishwaaFX real module', 0], ['Coorgified module', 0], ['Taarora module', 0], ['Shared skills', 0]] }
   ];
@@ -381,8 +446,33 @@ function vBuild() {
 }
 function vSettings() {
   const u = Drive.user(), vs = Voice.voices(), cur = Voice.pickVoice();
-  return `<div class="top"><div><h1>Settings</h1><p>Drive is shared by every device you sign in on. Voice settings belong to this device.</p></div></div>
+  const u2 = D.usage[Brain.month()] || { usd: 0, calls: 0, in: 0, out: 0 }, pctB = Math.min(100, u2.usd / (Brain.cfg.budgetUSD || 1) * 100);
+  return `<div class="top"><div><h1>Settings</h1><p>Drive is shared by every device you sign in on. Voice and AI settings belong to this device.</p></div></div>
   <div class="grid">
+   ${Voice.inClaudeApp ? '<section class="card s12"><div class="note"><b>You\'re in the Claude app\'s browser.</b> It blocks the microphone, so Jarvis can\'t hear you here. Open <span class="mono">dicksonpjo-sys.github.io/jarvis</span> in <b>Chrome</b> or <b>Edge</b> (Edge has the most natural voices), and install it from there.</div></section>' : ''}
+   <section class="card s6"><header><h2>Audio</h2><span class="r pill ${micPerm === 'granted' ? 'p-ok' : micPerm === 'denied' ? 'p-bad' : ''}">${micPerm === 'granted' ? 'allowed' : micPerm === 'denied' ? 'blocked' : 'not asked yet'}</span></header>
+    <div class="set" style="margin-bottom:12px">
+     <label for="aMic">Microphone</label><select class="in" id="aMic"><option value="">System default</option>${micList.map(d => `<option value="${esc(d.deviceId)}" ${Voice.cfg.micId === d.deviceId ? 'selected' : ''}>${esc(d.label || 'Microphone ' + d.deviceId.slice(0, 5))}</option>`).join('')}</select>
+     <label for="aSens">Meter sensitivity</label><input type="range" id="aSens" min="0.5" max="3" step="0.1" value="${Voice.cfg.sensitivity || 1}">
+     <label for="aVol">Jarvis volume</label><input type="range" id="aVol" min="0" max="1" step="0.05" value="${Voice.cfg.volume ?? 1}">
+    </div>
+    <canvas class="wv" style="width:100%;height:90px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:10px"></canvas>
+    <div class="bar" style="height:8px;margin-top:10px"><i id="micBar" style="width:0;background:var(--teal);transition:width .08s"></i></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:8px;font-size:12.5px"><span id="micLevelLbl" class="dim">Not listening</span><span class="dim mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(Voice.micLabel)}</span></div>
+    <div class="btns" style="margin-top:12px"><button class="btn ${Voice.checking ? 'no' : 'go'}" id="micChk">${Voice.checking ? 'Stop mic test' : 'Test microphone'}</button><button class="btn" id="spkChk">Test speaker</button></div>
+    <p class="dim" style="font-size:12px;margin:8px 0 0">Speech-to-text listens through the browser's default microphone. If you pick a different one here and Jarvis can't hear you, set the same mic as default in Windows Sound settings or in Chrome → Settings → Privacy → Site settings → Microphone.</p>
+    ${micPerm === 'denied' ? '<p class="dim" style="font-size:12.5px;margin:10px 0 0">The browser has blocked the mic for this site. Click the lock or tune icon left of the address, set <b>Microphone</b> to Allow, then reload.</p>' : '<p class="dim" style="font-size:12.5px;margin:10px 0 0">Talk while the check runs: the wave and bar should move. The same wave shows next to the mic button whenever Jarvis listens.</p>'}</section>
+   <section class="card s6"><header><h2>AI brain</h2><span class="r pill ${Brain.ready() ? 'p-ok' : 'p-warn'}">${Brain.ready() ? 'connected' : 'no key yet'}</span></header>
+    <div class="set">
+     <label for="aiModel">Model</label><select class="in" id="aiModel">${Brain.MODELS.map(m => `<option value="${m.id}" ${Brain.cfg.model === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+     <span></span><span class="dim" style="font-size:12px">${esc((Brain.MODELS.find(m => m.id === Brain.cfg.model) || {}).note || '')}</span>
+     <label for="aiKey">Claude API key</label><div class="field"><input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${Brain.ready() ? '•••• saved on this device' : 'sk-ant-…'}" aria-label="Claude API key"><button class="btn sm" id="aiKeySave" type="button">Save</button></div>
+     <label for="aiBudget">Monthly budget (USD)</label><div class="field"><input id="aiBudget" type="number" min="0" step="1" value="${Brain.cfg.budgetUSD}" aria-label="Monthly budget in US dollars"></div>
+     <label>This month</label><div><div class="bar" style="height:8px"><i style="width:${pctB}%;background:${pctB > 80 ? 'var(--amber)' : 'var(--green)'}"></i></div><span class="dim mono" style="font-size:12px">$${usd$(u2.usd)} of $${Brain.cfg.budgetUSD} · ${u2.calls} answers · ≈ ₹${Math.round(u2.usd * Brain.cfg.usdToInr)} (estimate)</span></div>
+    </div>
+    <div class="btns" style="margin-top:14px"><button class="btn go" id="aiTest" ${Brain.ready() ? '' : 'disabled'}>Test connection</button><button class="btn" id="aiForget">New conversation</button>${Brain.ready() ? '<button class="btn no" id="aiKeyDel">Remove key</button>' : ''}</div>
+    <details style="margin-top:12px"><summary class="dim" style="cursor:pointer;font-size:12.5px">Price estimates (edit to match your Anthropic Console)</summary><div class="set" style="margin-top:10px">${Brain.MODELS.map(m => `<label>${m.name}</label><span class="mono" style="font-size:12px">$<input class="in" style="width:64px;padding:3px 6px" type="number" step="0.05" min="0" data-rate="${m.id}|0" value="${Brain.cfg.rates[m.id][0]}" aria-label="${m.name} input price"> in · $<input class="in" style="width:64px;padding:3px 6px" type="number" step="0.05" min="0" data-rate="${m.id}|1" value="${Brain.cfg.rates[m.id][1]}" aria-label="${m.name} output price"> out per million tokens</span>`).join('')}</div></details>
+    <p class="dim" style="font-size:12px;margin:12px 0 0">Get a key at console.anthropic.com → API keys, and set a spend limit there too. The key stays in this browser only; it is never saved to Drive. Jarvis stops calling Claude when the monthly budget is reached.</p></section>
    <section class="card s6"><header><h2>Google Drive</h2></header>
     ${Drive.isConnected() ? `<div class="set"><label>Account</label><span>${esc(u?.email || 'Connected')}</span><label>Status</label><span>${$('#railSyncLbl').textContent}${syncState === 'err' ? ` · <span style="color:var(--red)">${esc(syncMsg)}</span>` : ''}</span><label>Data file</label><span class="mono" style="font-size:12px">My Drive / Jarvis / jarvis_data.json</span><label>Backups</label><span class="mono" style="font-size:12px">Jarvis / Backups / month / one per day</span></div>
      <div class="btns" style="margin-top:14px"><button class="btn go" id="syncBtn">${Drive.token() ? 'Sync now' : 'Reconnect'}</button><button class="btn" id="folderBtn">Open folder ↗</button><button class="btn no" id="discBtn">Disconnect</button></div>`
@@ -396,7 +486,7 @@ function vSettings() {
      <label for="vRate">Speed</label><input type="range" id="vRate" min="0.7" max="1.4" step="0.05" value="${Voice.cfg.rate}">
      <label for="vPitch">Pitch</label><input type="range" id="vPitch" min="0.6" max="1.3" step="0.05" value="${Voice.cfg.pitch}">
      <label>Speak replies</label><button class="tog" id="vSpeak" aria-pressed="${Voice.cfg.speak}">To voice commands<span class="sw"></span></button>
-     <label>Also to typing</label><button class="tog" id="vTyped" aria-pressed="${!!Voice.cfg.speakTyped}">Speak typed replies too<span class="sw"></span></button>
+     <label>Also to typing</label><button class="tog" id="vTyped" aria-pressed="${!!Voice.cfg.speakTyped}">Speak replies to typed questions<span class="sw"></span></button>
      <label>“Hey Jarvis”</label><button class="tog" id="vWake" aria-pressed="${Voice.wakeOn}" ${Voice.supported.listen ? '' : 'disabled'}>Listen while the app is open<span class="sw"></span></button>
     </div>
     <div class="btns" style="margin-top:14px"><button class="btn" id="vTest">Test voice</button></div>
@@ -449,6 +539,12 @@ document.addEventListener('click', e => {
   if (t.closest('#vTyped')) { setVoice({ speakTyped: !Voice.cfg.speakTyped }); render(); return; }
   if (t.closest('#vWake') || t.closest('#wakeBtn')) { toggleWake(); if (VIEW === 'settings') render(); return; }
   if (t.closest('#spkBtn')) { setVoice({ speak: !Voice.cfg.speak }); return; }
+  if (t.closest('#micChk')) { Voice.micCheck(!Voice.checking).then(() => { refreshPerm(); }); setTimeout(render, 50); return; }
+  if (t.closest('#spkChk')) { Voice.speak('Testing, one, two, three. This is Jarvis, at this volume.', { force: true }); return; }
+  if (t.closest('#aiKeySave')) { const k = $('#aiKey').value.trim(); if (!/^sk-ant-/.test(k)) { toast('That doesn\'t look like a Claude API key (it starts with sk-ant-).', true); return; } Brain.save({ apiKey: k }); log('You', 'Added a Claude API key on this device'); save(); render(); toast('Key saved on this device'); return; }
+  if (t.closest('#aiKeyDel')) { Brain.save({ apiKey: '' }); render(); toast('Key removed from this device'); return; }
+  if (t.closest('#aiForget')) { Brain.forget(); toast('Started a new conversation'); return; }
+  if (t.closest('#aiTest')) { const b = $('#aiTest'); b.disabled = true; b.textContent = 'Testing…'; Brain.test().then(x => { toast('Claude says: ' + x); Voice.speak(x, { force: true }); }).catch(e => toast(e.message, true)).finally(() => render()); return; }
   if (t.closest('#expBtn')) { copy(JSON.stringify(D, null, 2), 'All data copied'); return; }
   if (t.closest('#resetBtn')) { const md = modal(`<b>Reset this device?</b><p style="margin:0" class="dim">Clears Jarvis from this browser. Your Drive copy is kept, and comes back when you connect again.</p><div class="btns"><button class="btn no" id="rsY">Reset</button><button class="btn" data-close>Cancel</button></div>`);
     md.querySelector('#rsY').onclick = () => { try { Object.keys(localStorage).filter(k => k.startsWith('jarvis.') || k.startsWith('jv.')).forEach(k => localStorage.removeItem(k)); } catch {} location.reload(); }; return; }
@@ -470,9 +566,13 @@ document.addEventListener('submit', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'vLang') setVoice({ lang: t.value });
+  if (t.id === 'aMic') { setVoice({ micId: t.value }); Voice.restartMeter(); toast('Microphone changed'); }
+  if (t.id === 'aiModel') { Brain.save({ model: t.value }); Brain.forget(); log('You', 'Switched AI model to ' + Brain.modelName(t.value)); save(); render(); toast('Now using ' + Brain.modelName(t.value)); }
+  if (t.id === 'aiBudget') { Brain.save({ budgetUSD: Math.max(0, +t.value || 0) }); render(); }
+  if (t.dataset?.rate) { const [id, ix] = t.dataset.rate.split('|'); const r = [...Brain.cfg.rates[id]]; r[+ix] = Math.max(0, +t.value || 0); Brain.save({ rates: { ...Brain.cfg.rates, [id]: r } }); }
   if (t.id === 'vVoice') { setVoice({ voiceURI: t.value }); Voice.speak('This is my voice now.', { force: true }); }
 });
-document.addEventListener('input', e => { const t = e.target; if (t.id === 'vRate') setVoice({ rate: +t.value }); if (t.id === 'vPitch') setVoice({ pitch: +t.value }); if (t.id === 'gq') gsearch(t.value); });
+document.addEventListener('input', e => { const t = e.target; if (t.id === 'vRate') setVoice({ rate: +t.value }); if (t.id === 'aSens') setVoice({ sensitivity: +t.value }); if (t.id === 'aVol') setVoice({ volume: +t.value }); if (t.id === 'vPitch') setVoice({ pitch: +t.value }); if (t.id === 'gq') gsearch(t.value); });
 function ideaModal() {
   const md = modal(`<b>New idea</b><form id="qIdea" style="display:grid;gap:10px"><div class="field"><input id="qT" placeholder="What's the idea?" aria-label="Idea"></div><div class="field"><select id="qB" aria-label="Business">${[...Object.keys(BIZ()), 'all', 'me'].map(k => `<option value="${k}">${esc(bizName(k))}</option>`).join('')}</select></div><div class="btns"><button class="btn go" value="idea">Add idea</button><button class="btn" value="queued">Queue for Jarvis</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
   md.querySelector('#qIdea').addEventListener('submit', ev => { ev.preventDefault(); ev.stopPropagation(); const t = $('#qT').value.trim(); if (!t) return; const i = addIdea(t, $('#qB').value, ev.submitter?.value || 'idea'); closeModal(); selectNode(GD.ix['i:' + i.id]); toast('Added to the Brain'); });
@@ -481,13 +581,15 @@ function ideaModal() {
 function gsearch(q) { const el = $('#gres'); if (!q.trim()) { el.innerHTML = ''; return; } const hits = searchNodes(q); el.innerHTML = hits.length ? hits.map(([i, n]) => `<button data-node="${i}"><i style="background:${TYPES[n.type][1]}"></i>${esc(n.l)}</button>`).join('') : '<div class="empty">No match.</div>'; }
 
 /* ============ voice wiring ============ */
+let micPerm = 'unknown', micList = [];
+function refreshPerm() { Promise.all([Voice.permission(), Voice.inputs()]).then(([p, l]) => { const ch = p !== micPerm || l.length !== micList.length || (l[0] && !micList[0]?.label && l[0].label); micPerm = p; micList = l; if (ch && VIEW === 'settings') render(); }); }
 const VKEY = 'jarvis.v1.voice';
 function setVoice(c) { Voice.configure(c); LS.set(VKEY, { ...Voice.cfg }); syncVoiceUI(); }
 function syncVoiceUI() { $('#spkBtn').setAttribute('aria-pressed', Voice.cfg.speak); $('#spkBtn').textContent = Voice.cfg.speak ? 'VOICE ON' : 'VOICE OFF'; $('#wakeBtn').setAttribute('aria-pressed', Voice.wakeOn); $('#wakeBtn').textContent = 'HEY JARVIS · ' + (Voice.wakeOn ? 'ON' : 'OFF'); }
 function toggleWake() { const on = Voice.setWake(!Voice.wakeOn); LS.set('jarvis.v1.wake', on); syncVoiceUI(); toast(on ? 'Listening for “Hey Jarvis” while this window is open' : 'Wake mode off'); }
 const STATE_LBL = { idle: 'Ready', wake: 'Listening for “Hey Jarvis”', ptt: 'Listening…', speaking: 'Speaking' };
 Voice.on({
-  state: m => { $('#orbState').textContent = STATE_LBL[m] || m; $$('[data-mic]').forEach(b => b.classList.toggle('on', m === 'ptt')); $('#ptt').classList.toggle('on', m === 'ptt'); $('#ptt').textContent = m === 'ptt' ? '◉ LISTENING' : '◉ HOLD TO TALK'; },
+  state: m => { refreshPerm(); $('#orbState').textContent = STATE_LBL[m] || m; $$('[data-mic]').forEach(b => b.classList.toggle('on', m === 'ptt')); $('#ptt').classList.toggle('on', m === 'ptt'); $('#ptt').textContent = m === 'ptt' ? '◉ LISTENING' : '◉ HOLD TO TALK'; },
   interim: t => { $('#heard').textContent = t ? '“' + t + '”' : ''; },
   wake: k => { $('#orbState').textContent = k === 'ask' ? 'Yes, Dickson?' : 'Heard you'; if (k === 'ask') Voice.speak('Yes?'); },
   command: (t) => { $('#heard').textContent = '“' + t + '”'; handle(t, 'voice'); },
@@ -535,6 +637,8 @@ function welcome() {
   [$('#ptt'), ...$$('[data-mic]')].forEach(bindPTT);
   syncVoiceUI(); orbLoop(); route(); save({ sync: false });
   if (Drive.token()) syncNow(); else if (Drive.isConnected()) setSync('needs');
+  refreshPerm();
+  if (Voice.inClaudeApp) setTimeout(() => toast('Voice input needs Chrome or Edge. The Claude app\'s browser blocks the microphone.', true), 1500);
   if (LS.get('jarvis.v1.wake', false) && Voice.supported.listen) toast('Tap “Hey Jarvis” to start listening again');
   setTimeout(welcome, 600);
 })();

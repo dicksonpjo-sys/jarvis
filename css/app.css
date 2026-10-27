@@ -241,3 +241,7 @@ pre.code{margin:0;font:11.5px/1.5 var(--mono);background:var(--panel);border:1px
   .top .aside{margin-left:0}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.cmdf canvas.wv.mini{width:56px;height:26px;flex:none;opacity:.9}
+@media (max-width:420px){.cmdf canvas.wv.mini{width:34px}}
+details summary{list-style-position:inside}

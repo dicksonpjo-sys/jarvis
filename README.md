@@ -1,4 +1,4 @@
-# Jarvis v1.0.0
+# Jarvis v1.1.0
 
 Dickson's personal AI operating system. A web app you install on PC and phone; everything it knows is saved in your Google Drive.
 
@@ -17,6 +17,20 @@ Dickson's personal AI operating system. A web app you install on PC and phone; e
   - Works in Chrome and Edge on PC and Android. iPhone can type and hear replies.
 - **Google Drive**: My Drive / Jarvis / `jarvis_data.json`, plus a daily copy in Jarvis / Backups / month. Every device that signs in sees the same data.
 
+## New in 1.1
+- **AI brain:** anything that isn't a built-in command goes to Claude.
+  - Pick Haiku, Sonnet, Opus or Fable in Settings → AI brain.
+  - Claude can save ideas, queue tasks and open pages, but never approves anything.
+  - The API key stays on each device and is never saved to Drive.
+  - A monthly budget (USD) stops calls when it's reached. Usage is estimated from the token counts each answer reports.
+- **Audio** in Settings:
+  - Microphone picker, live waveform and level meter, meter sensitivity.
+  - Jarvis volume, and a speaker test.
+  - A waveform beside every mic button moves while Jarvis is listening.
+- Replies to typed questions are now spoken too (can be switched off).
+- Jarvis prefers natural voices (Edge's "Online (Natural)" voices) when they are available.
+- Jarvis warns when it's opened in the Claude app's browser, which blocks the microphone.
+
 ## Things to say
 `morning brief` · `idea: …` · `queue: …` · `what needs approval` · `open VishwaaFX` · `search payroll` · `what time is it` · `help` · `stop` · any command from a plugged-in module (e.g. `send quote`).
 
@@ -27,9 +41,8 @@ Dickson's personal AI operating system. A web app you install on PC and phone; e
 - Voice uses the browser's own speech engines, so it costs nothing. In Chrome, speech is turned into text by Google's speech service.
 
 ## Not in v1 yet
-- Free-form questions answered by Claude. This needs the monthly AI budget set first.
 - Running module commands. Needs the PC runner.
 - An offline wake word that works with the app closed. Needs the PC runner.
 
 ## Files
-`index.html`, `css/app.css`, `js/config.js` (Client ID, version), `js/drive.js` (Drive storage), `js/voice.js` (speech in/out), `js/app.js` (Brain, pages, commands), `js/sample.js` (Studio Hub prototype module), `sw.js` (offline cache), `manifest.webmanifest`, `icons/`.
+`index.html`, `css/app.css`, `js/config.js` (Client ID, version), `js/drive.js` (Drive storage), `js/voice.js` (speech in/out), `js/app.js` (Brain, pages, commands), `js/brain.js` (Claude API), `js/sample.js` (Studio Hub prototype module), `sw.js` (offline cache), `manifest.webmanifest`, `icons/`.

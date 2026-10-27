@@ -10,11 +10,12 @@ const Voice = (() => {
   const synth = window.speechSynthesis;
   const WAKE = /\b(?:hey|hi|ok|okay)?\s*j[ae]rv[ie]s\b[\s,.:!-]*/i;
   const supported = { listen: !!SR, speak: !!synth };
-  const cfg = { lang: 'en-IN', voiceURI: '', rate: 1, pitch: 0.95, speak: true };
+  const cfg = { lang: 'en-IN', voiceURI: '', rate: 1, pitch: 0.95, volume: 1, speak: true, speakTyped: true, micId: '', sensitivity: 1 };
   const h = { state: () => {}, interim: () => {}, command: () => {}, error: () => {}, wake: () => {} };
 
   let rec = null, mode = 'idle', wakeOn = false, awaitingCmd = 0, restartTimer = null, speaking = false;
-  let level = 0, audio = null;
+  let level = 0, audio = null, wave = null, checking = false;
+  const inClaudeApp = /\bClaude\//.test(navigator.userAgent);
 
   function on(handlers) { Object.assign(h, handlers); }
   function configure(c) { Object.assign(cfg, c || {}); }
@@ -25,8 +26,13 @@ const Voice = (() => {
   function pickVoice() {
     const all = voices();
     if (cfg.voiceURI) { const v = all.find(v => v.voiceURI === cfg.voiceURI); if (v) return v; }
-    return all.find(v => /Google UK English Male/i.test(v.name))
+    const nat = v => /natural|neural|online/i.test(v.name);
+    return all.find(v => nat(v) && /en-GB/i.test(v.lang) && /ryan|thomas|george|oliver|male/i.test(v.name))
+      || all.find(v => nat(v) && /en-IN/i.test(v.lang) && /prabhat|male/i.test(v.name))
+      || all.find(v => /Google UK English Male/i.test(v.name))
+      || all.find(v => nat(v) && /^en/i.test(v.lang))
       || all.find(v => /en-GB/i.test(v.lang) && /male|daniel|george|ryan|arthur/i.test(v.name))
+      || all.find(v => /en-IN/i.test(v.lang) && /ravi|prabhat/i.test(v.name))
       || all.find(v => /en-IN/i.test(v.lang))
       || all.find(v => /en-GB/i.test(v.lang))
       || all.find(v => /^en/i.test(v.lang)) || null;
@@ -38,7 +44,7 @@ const Voice = (() => {
       synth.cancel();
       const u = new SpeechSynthesisUtterance(plain(text));
       const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
-      u.rate = cfg.rate; u.pitch = cfg.pitch;
+      u.rate = cfg.rate; u.pitch = cfg.pitch; u.volume = cfg.volume ?? 1;
       const done = () => { speaking = false; if (mode === 'speaking') setMode(wakeOn ? 'wake' : 'idle'); if (wakeOn) startWake(); resolve(); };
       u.onend = done; u.onerror = done;
       speaking = true; setMode('speaking');
@@ -56,14 +62,14 @@ const Voice = (() => {
     r.lang = cfg.lang; r.continuous = continuous; r.interimResults = true; r.maxAlternatives = 1;
     r.onerror = e => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { wakeOn = false; h.error('Microphone blocked. Allow the microphone for this site in the browser\'s address bar, then try again.'); }
-      else if (e.error === 'network') h.error('Speech recognition needs an internet connection.');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { wakeOn = false; stopRec(); setMode('idle'); h.error(inClaudeApp ? 'The Claude app\'s browser can\'t use the microphone. Open Jarvis in Chrome or Edge.' : 'Microphone blocked. Click the lock icon in the address bar, allow Microphone, then reload.'); }
+      else if (e.error === 'network') { h.error(inClaudeApp ? 'Speech-to-text doesn\'t work in the Claude app\'s browser. Open Jarvis in Chrome or Edge.' : 'Speech recognition needs an internet connection.'); }
       else if (e.error === 'audio-capture') h.error('No microphone found.');
       else h.error('Voice error: ' + e.error);
     };
     return r;
   }
-  function stopRec() { clearTimeout(restartTimer); if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch {} } meter(false); }
+  function stopRec() { clearTimeout(restartTimer); if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch {} } if (!checking) meter(false); }
 
   /* Hold-to-talk: listen until released, then send what was heard. */
   let pttText = '', pttFinal = '';
@@ -119,26 +125,38 @@ const Voice = (() => {
       }
     };
     rec.onend = () => { if (wakeOn && !speaking && mode !== 'ptt') restartTimer = setTimeout(startWake, 300); };
-    try { rec.start(); setMode('wake'); } catch { restartTimer = setTimeout(startWake, 800); }
+    try { rec.start(); setMode('wake'); meter(true); } catch { restartTimer = setTimeout(startWake, 800); }
   }
   /* Browsers stop listening in background tabs; resume when the tab is visible again. */
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeOn && !rec) startWake(); });
 
-  /* Microphone level for the orb (optional; ignored if not allowed). */
+  /* Live microphone level and waveform, so you can see Jarvis hearing you. */
+  let meterReq = 0;
   async function meter(onOff) {
-    if (!onOff) { if (audio) { audio.stream.getTracks().forEach(t => t.stop()); audio.ctx.close().catch(() => {}); audio = null; } level = 0; return; }
-    if (audio || !navigator.mediaDevices?.getUserMedia) return;
+    const my = ++meterReq;
+    if (!onOff) { if (audio) { audio.stream.getTracks().forEach(t => t.stop()); audio.ctx.close().catch(() => {}); audio = null; } level = 0; wave = null; return true; }
+    if (audio) return true;
+    if (!navigator.mediaDevices?.getUserMedia) { h.error('This browser gives no microphone access.'); return false; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (mode !== 'ptt') { stream.getTracks().forEach(t => t.stop()); return; }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, ...(cfg.micId ? { deviceId: { exact: cfg.micId } } : {}) } });
+      if (my !== meterReq) { stream.getTracks().forEach(t => t.stop()); return false; }
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const an = ctx.createAnalyser(); an.fftSize = 256; ctx.createMediaStreamSource(stream).connect(an);
-      const buf = new Uint8Array(an.frequencyBinCount);
-      audio = { stream, ctx };
-      (function tick() { if (!audio) return; an.getByteFrequencyData(buf); let s = 0; for (const v of buf) s += v; level = s / buf.length / 128; requestAnimationFrame(tick); })();
-    } catch { /* level meter is optional */ }
+      const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = .6; ctx.createMediaStreamSource(stream).connect(an);
+      const td = new Uint8Array(an.fftSize);
+      audio = { stream, ctx, label: stream.getAudioTracks()[0]?.label || 'Microphone' };
+      (function tick() { if (!audio || audio.stream !== stream) return; an.getByteTimeDomainData(td); let sum = 0; for (const v of td) { const x = (v - 128) / 128; sum += x * x; } const rms = Math.sqrt(sum / td.length); level = Math.min(1, level * .6 + Math.min(1, rms * 4 * (cfg.sensitivity || 1)) * .4); wave = td; requestAnimationFrame(tick); })();
+      return true;
+    } catch (e) {
+      h.error(e.name === 'NotAllowedError' ? (inClaudeApp ? 'The Claude app\'s browser blocks the microphone. Open Jarvis in Chrome or Edge.' : 'Microphone blocked. Click the lock icon in the address bar, allow Microphone, then reload.') : e.name === 'NotFoundError' ? 'No microphone found. Plug one in or check Windows sound settings.' : 'Microphone error: ' + e.message);
+      return false;
+    }
   }
+  /* Settings → Microphone check: show the live level without starting speech-to-text. */
+  async function micCheck(onOff) { checking = !!onOff; if (onOff) return meter(true); if (mode !== 'ptt' && mode !== 'wake') meter(false); return false; }
+  async function inputs() { try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { return []; } }
+  async function restartMeter() { if (audio) { await meter(false); return meter(true); } }
+  async function permission() { try { return (await navigator.permissions.query({ name: 'microphone' })).state; } catch { return 'unknown'; } }
 
-  return { supported, on, configure, speak, stopSpeaking, startPTT, endPTT, setWake, voices, pickVoice,
-    get mode() { return mode; }, get level() { return level; }, get wakeOn() { return wakeOn; }, cfg };
+  return { supported, on, configure, speak, stopSpeaking, startPTT, endPTT, setWake, voices, pickVoice, micCheck, permission, inputs, restartMeter, inClaudeApp,
+    get mode() { return mode; }, get level() { return level; }, get wave() { return wave; }, get micLabel() { return audio?.label || ''; }, get checking() { return checking; }, get wakeOn() { return wakeOn; }, cfg };
 })();
