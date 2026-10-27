@@ -1,4 +1,4 @@
-# Jarvis v1.1.0
+# Jarvis v1.2.0
 
 Dickson's personal AI operating system. A web app you install on PC and phone; everything it knows is saved in your Google Drive.
 
@@ -16,6 +16,16 @@ Dickson's personal AI operating system. A web app you install on PC and phone; e
   - Jarvis answers aloud. Choose the voice, speed and pitch in Settings.
   - Works in Chrome and Edge on PC and Android. iPhone can type and hear replies.
 - **Google Drive**: My Drive / Jarvis / `jarvis_data.json`, plus a daily copy in Jarvis / Backups / month. Every device that signs in sees the same data.
+
+## New in 1.2: free models through Hermes
+- Settings → AI brain → **Provider**: Claude (paid) or **Hermes · NVIDIA (free)**.
+- NVIDIA's API refuses calls from web pages, so Jarvis talks to **Hermes Agent on your PC** (`hermes gateway`, http://127.0.0.1:8642), and Hermes talks to NVIDIA's free models.
+- Model picker: Hermes's own setting, DeepSeek V4 Flash, GLM 5.1, or any NVIDIA model ID.
+- **Make a new key** creates the Hermes API key and shows the three `.env` lines to paste:
+  - `API_SERVER_ENABLED=true`
+  - `API_SERVER_KEY=…`
+  - `API_SERVER_CORS_ORIGINS=https://dicksonpjo-sys.github.io`
+- Optional fallback: if Hermes fails or times out, Claude answers instead.
 
 ## New in 1.1
 - **AI brain:** anything that isn't a built-in command goes to Claude.

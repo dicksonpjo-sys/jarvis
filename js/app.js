@@ -197,15 +197,18 @@ function runTool(name, inp) {
 }
 async function askClaude(q, src) {
   if (!Brain.ready()) {
-    showReply(q, `<p>I need my AI brain for that. Add your Claude API key in <a href="#settings">Settings → AI brain</a>. Until then I can do: morning brief, idea, queue, approvals, open, search.</p>`, src);
-    if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak('I need my AI brain for that. Add your Claude API key in settings.');
+    const what = Brain.cfg.provider === 'hermes' ? 'set up Hermes' : 'add your Claude API key';
+    showReply(q, `<p>I need my AI brain for that: ${what} in <a href="#settings">Settings → AI brain</a>. Until then I can do: morning brief, idea, queue, approvals, open, search.</p>`, src);
+    if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(`I need my AI brain for that. Please ${what} in settings.`);
     return;
   }
-  thinking = true; showReply(q, `<p class="dim">Thinking with ${esc(Brain.modelName(Brain.cfg.model))}…</p>`, src);
+  thinking = true; showReply(q, `<p class="dim">Thinking with ${esc(Brain.currentName())}…</p>`, src);
   try {
     const r = await Brain.ask(q, { context: contextText(), tools: AI_TOOLS, runTool, usage: D.usage });
-    log('Jarvis', `Answered with ${Brain.modelName(r.model)} · ${r.inTok + r.outTok} tokens`); save();
-    showReply(q, `<p>${esc(r.text).replace(/\n+/g, '</p><p>')}</p><p class="dim" style="font-size:11.5px;margin-top:8px">${esc(Brain.modelName(r.model))} · about $${r.usd.toFixed(4)} · this month $${usd$(D.usage[Brain.month()]?.usd || 0)} of $${Brain.cfg.budgetUSD}</p>`, src);
+    const who = r.provider === 'hermes' ? 'Hermes · ' + (r.model === 'hermes' ? 'its own model' : Brain.modelName(r.model)) : Brain.modelName(r.model);
+    log('Jarvis', `Answered with ${who} · ${r.inTok + r.outTok} tokens`); save();
+    const meta = r.provider === 'hermes' ? `${esc(who)} · free` : `${esc(who)} · about $${r.usd.toFixed(4)} · this month $${usd$(D.usage[Brain.month()]?.usd || 0)} of $${Brain.cfg.budgetUSD}`;
+    showReply(q, `<p>${esc(r.text).replace(/\n+/g, '</p><p>')}</p>${r.note ? `<p class="dim" style="font-size:12px">${esc(r.note)}</p>` : ''}<p class="dim" style="font-size:11.5px;margin-top:8px">${meta}</p>`, src);
     thinking = false;
     if (src === 'voice' || Voice.cfg.speakTyped) Voice.speak(r.text);
   } catch (e) {
@@ -216,7 +219,7 @@ async function askClaude(q, src) {
 }
 function helpHtml() {
   const mc = Object.values(D.modules).flatMap(r => r?.m ? r.m.tools.flatMap(t => (t.commands || []).map(c => `<li><b>${esc(c.say)}</b> · ${esc(t.name)}${c.needs_approval ? ' (asks you first)' : ''}</li>`)) : []);
-  return `<p>Say “Hey Jarvis” first if wake mode is on, or hold the mic.</p><ul><li><b>morning brief</b> / status</li><li><b>idea:</b> … saves a thought · <b>queue:</b> … asks Jarvis to plan it</li><li><b>what needs approval</b></li><li><b>open</b> VishwaaFX / Coorgified / Taarora / ideas / approvals / settings</li><li><b>search</b> …</li><li><b>stop</b> to stop talking</li><li>Anything else goes to Claude (${esc(Brain.modelName(Brain.cfg.model))})${Brain.ready() ? '' : ' once you add an API key in Settings'}</li>${mc.join('')}</ul>`;
+  return `<p>Say “Hey Jarvis” first if wake mode is on, or hold the mic.</p><ul><li><b>morning brief</b> / status</li><li><b>idea:</b> … saves a thought · <b>queue:</b> … asks Jarvis to plan it</li><li><b>what needs approval</b></li><li><b>open</b> VishwaaFX / Coorgified / Taarora / ideas / approvals / settings</li><li><b>search</b> …</li><li><b>stop</b> to stop talking</li><li>Anything else goes to your AI brain (${esc(Brain.currentName())})${Brain.ready() ? '' : ' once it is set up in Settings'}</li>${mc.join('')}</ul>`;
 }
 function showReply(q, html, src) {
   const out = `<div class="reply"><div class="who">JARVIS <span class="you">${src === 'voice' ? '🎙 ' : ''}“${esc(q)}”</span><button class="x" aria-label="Close" data-closereply>✕</button></div>${html}</div>`;
@@ -428,9 +431,9 @@ function vApprovals() {
 function phases() {
   const onPages = /github\.io$/.test(location.hostname);
   return [
-    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', Brain.ready() ? 1 : 0]] },
+    { n: 'Architecture', items: [['PRD', 1], ['Brain + tab design', 1], ['Business module contract', 1], ['Stack: web app + Google Drive', 1], ['Threat model', 0], ['Monthly AI budget', Brain.claudeReady() || Brain.hermesReady() ? 1 : 0]] },
     { n: 'Prototype', items: [['Brain home', 1], ['Ideas', 1], ['Build tracker', 1], ['3 businesses', 1], ['Approvals', 1], ['Studio Hub', 1], ['Module plug', 1]] },
-    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1], ['Live mic visualizer', 1], ['Claude brain (choose model)', Brain.ready() ? 1 : 0], ['Monthly AI budget guard', 1]] },
+    { n: 'Jarvis v1 (real)', items: [['Hosted online', onPages ? 1 : 0], ['Google sign-in', Drive.isConnected() ? 1 : 0], ['Saves to Drive', D.meta?.lastSync ? 1 : 0], ['Daily Drive backups', D.meta?.lastSync ? 1 : 0], ['Voice in', Voice.supported.listen ? 1 : 0], ['Voice out', Voice.supported.speak ? 1 : 0], ['“Hey Jarvis” wake mode', Voice.supported.listen ? 1 : 0], ['Installable app', 1], ['Live mic visualizer', 1], ['Claude brain (choose model)', Brain.claudeReady() ? 1 : 0], ['Free models via Hermes', Brain.hermesReady() ? 1 : 0], ['Monthly AI budget guard', 1]] },
     { n: 'PC runner', items: [['Runner on studio PC', 0], ['Folder access', 0], ['Modules run commands', 0], ['Offline wake word', 0], ['Premium voice', 0]] },
     { n: 'Agents & cost', items: [['Planner', 0], ['Specialist agents', 0], ['Approval gateway', 0], ['Usage & budget', 0]] },
     { n: 'Expansion', items: [['VishwaaFX real module', 0], ['Coorgified module', 0], ['Taarora module', 0], ['Shared skills', 0]] }
@@ -462,17 +465,33 @@ function vSettings() {
     <div class="btns" style="margin-top:12px"><button class="btn ${Voice.checking ? 'no' : 'go'}" id="micChk">${Voice.checking ? 'Stop mic test' : 'Test microphone'}</button><button class="btn" id="spkChk">Test speaker</button></div>
     <p class="dim" style="font-size:12px;margin:8px 0 0">Speech-to-text listens through the browser's default microphone. If you pick a different one here and Jarvis can't hear you, set the same mic as default in Windows Sound settings or in Chrome → Settings → Privacy → Site settings → Microphone.</p>
     ${micPerm === 'denied' ? '<p class="dim" style="font-size:12.5px;margin:10px 0 0">The browser has blocked the mic for this site. Click the lock or tune icon left of the address, set <b>Microphone</b> to Allow, then reload.</p>' : '<p class="dim" style="font-size:12.5px;margin:10px 0 0">Talk while the check runs: the wave and bar should move. The same wave shows next to the mic button whenever Jarvis listens.</p>'}</section>
-   <section class="card s6"><header><h2>AI brain</h2><span class="r pill ${Brain.ready() ? 'p-ok' : 'p-warn'}">${Brain.ready() ? 'connected' : 'no key yet'}</span></header>
+   <section class="card s6"><header><h2>AI brain</h2><span class="r pill ${Brain.ready() ? 'p-ok' : 'p-warn'}">${Brain.ready() ? 'ready' : 'not set up'}</span></header>
     <div class="set">
+     <label>Provider</label><div class="btns"><button class="btn ${Brain.cfg.provider === 'claude' ? 'go' : ''}" data-prov="claude">Claude (paid)</button><button class="btn ${Brain.cfg.provider === 'hermes' ? 'go' : ''}" data-prov="hermes">Hermes · NVIDIA (free)</button></div>
+    </div>
+    ${Brain.cfg.provider === 'hermes' ? `
+    <div class="set" style="margin-top:12px">
+     <label for="hModel">Model</label><select class="in" id="hModel">${Brain.HERMES_MODELS.map(m => `<option value="${m.id}" ${Brain.cfg.hermesModel === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}<option value="custom" ${Brain.cfg.hermesModel === 'custom' ? 'selected' : ''}>Another NVIDIA model…</option></select>
+     <span></span><span class="dim" style="font-size:12px">${esc((Brain.HERMES_MODELS.find(m => m.id === Brain.cfg.hermesModel) || { note: 'Type the model ID from build.nvidia.com, e.g. vendor/model-name.' }).note)}</span>
+     ${Brain.cfg.hermesModel === 'custom' ? `<label for="hCustom">Model ID</label><div class="field"><input id="hCustom" value="${esc(Brain.cfg.hermesCustom)}" placeholder="vendor/model-name" aria-label="NVIDIA model ID"></div>` : ''}
+     <label for="hUrl">Hermes address</label><div class="field"><input id="hUrl" value="${esc(Brain.cfg.hermesUrl)}" aria-label="Hermes address"></div>
+     <label for="hKey">Hermes key</label><div class="field"><input id="hKey" type="password" autocomplete="off" spellcheck="false" placeholder="${Brain.hermesReady() ? '•••• saved on this device' : 'API_SERVER_KEY from Hermes'}" aria-label="Hermes key"><button class="btn sm" id="hKeySave" type="button">Save</button></div>
+     <span></span><div class="btns"><button class="btn sm" id="hMake" type="button">Make a new key</button></div>
+     <label>If Hermes fails</label><button class="tog" id="hFall" aria-pressed="${!!Brain.cfg.fallback}">Let Claude answer instead${Brain.claudeReady() ? '' : ' (needs a Claude key)'}<span class="sw"></span></button>
+    </div>
+    <div class="btns" style="margin-top:14px"><button class="btn go" id="hTest" ${Brain.hermesReady() ? '' : 'disabled'}>Test Hermes</button><button class="btn" id="hGuide">Setup steps</button><button class="btn" id="aiForget">New conversation</button></div>
+    <p class="dim" style="font-size:12px;margin:12px 0 0">Free, but NVIDIA's free tier is rate-limited and sometimes times out. Hermes runs on your PC and can use its own tools there; Jarvis asks it only to answer and to save ideas. Calls this month: ${(D.usage[Brain.month()]?.free || 0)} via Hermes.</p>`
+    : `
+    <div class="set" style="margin-top:12px">
      <label for="aiModel">Model</label><select class="in" id="aiModel">${Brain.MODELS.map(m => `<option value="${m.id}" ${Brain.cfg.model === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
      <span></span><span class="dim" style="font-size:12px">${esc((Brain.MODELS.find(m => m.id === Brain.cfg.model) || {}).note || '')}</span>
-     <label for="aiKey">Claude API key</label><div class="field"><input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${Brain.ready() ? '•••• saved on this device' : 'sk-ant-…'}" aria-label="Claude API key"><button class="btn sm" id="aiKeySave" type="button">Save</button></div>
+     <label for="aiKey">Claude API key</label><div class="field"><input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${Brain.claudeReady() ? '•••• saved on this device' : 'sk-ant-…'}" aria-label="Claude API key"><button class="btn sm" id="aiKeySave" type="button">Save</button></div>
      <label for="aiBudget">Monthly budget (USD)</label><div class="field"><input id="aiBudget" type="number" min="0" step="1" value="${Brain.cfg.budgetUSD}" aria-label="Monthly budget in US dollars"></div>
      <label>This month</label><div><div class="bar" style="height:8px"><i style="width:${pctB}%;background:${pctB > 80 ? 'var(--amber)' : 'var(--green)'}"></i></div><span class="dim mono" style="font-size:12px">$${usd$(u2.usd)} of $${Brain.cfg.budgetUSD} · ${u2.calls} answers · ≈ ₹${Math.round(u2.usd * Brain.cfg.usdToInr)} (estimate)</span></div>
     </div>
-    <div class="btns" style="margin-top:14px"><button class="btn go" id="aiTest" ${Brain.ready() ? '' : 'disabled'}>Test connection</button><button class="btn" id="aiForget">New conversation</button>${Brain.ready() ? '<button class="btn no" id="aiKeyDel">Remove key</button>' : ''}</div>
+    <div class="btns" style="margin-top:14px"><button class="btn go" id="aiTest" ${Brain.claudeReady() ? '' : 'disabled'}>Test connection</button><button class="btn" id="aiForget">New conversation</button>${Brain.claudeReady() ? '<button class="btn no" id="aiKeyDel">Remove key</button>' : ''}</div>
     <details style="margin-top:12px"><summary class="dim" style="cursor:pointer;font-size:12.5px">Price estimates (edit to match your Anthropic Console)</summary><div class="set" style="margin-top:10px">${Brain.MODELS.map(m => `<label>${m.name}</label><span class="mono" style="font-size:12px">$<input class="in" style="width:64px;padding:3px 6px" type="number" step="0.05" min="0" data-rate="${m.id}|0" value="${Brain.cfg.rates[m.id][0]}" aria-label="${m.name} input price"> in · $<input class="in" style="width:64px;padding:3px 6px" type="number" step="0.05" min="0" data-rate="${m.id}|1" value="${Brain.cfg.rates[m.id][1]}" aria-label="${m.name} output price"> out per million tokens</span>`).join('')}</div></details>
-    <p class="dim" style="font-size:12px;margin:12px 0 0">Get a key at console.anthropic.com → API keys, and set a spend limit there too. The key stays in this browser only; it is never saved to Drive. Jarvis stops calling Claude when the monthly budget is reached.</p></section>
+    <p class="dim" style="font-size:12px;margin:12px 0 0">Get a key at console.anthropic.com → API keys, and set a spend limit there too. The key stays in this browser only; it is never saved to Drive. Jarvis stops calling Claude when the monthly budget is reached.</p>`}</section>
    <section class="card s6"><header><h2>Google Drive</h2></header>
     ${Drive.isConnected() ? `<div class="set"><label>Account</label><span>${esc(u?.email || 'Connected')}</span><label>Status</label><span>${$('#railSyncLbl').textContent}${syncState === 'err' ? ` · <span style="color:var(--red)">${esc(syncMsg)}</span>` : ''}</span><label>Data file</label><span class="mono" style="font-size:12px">My Drive / Jarvis / jarvis_data.json</span><label>Backups</label><span class="mono" style="font-size:12px">Jarvis / Backups / month / one per day</span></div>
      <div class="btns" style="margin-top:14px"><button class="btn go" id="syncBtn">${Drive.token() ? 'Sync now' : 'Reconnect'}</button><button class="btn" id="folderBtn">Open folder ↗</button><button class="btn no" id="discBtn">Disconnect</button></div>`
@@ -540,6 +559,12 @@ document.addEventListener('click', e => {
   if (t.closest('#vWake') || t.closest('#wakeBtn')) { toggleWake(); if (VIEW === 'settings') render(); return; }
   if (t.closest('#spkBtn')) { setVoice({ speak: !Voice.cfg.speak }); return; }
   if (t.closest('#micChk')) { Voice.micCheck(!Voice.checking).then(() => { refreshPerm(); }); setTimeout(render, 50); return; }
+  if (el = t.closest('[data-prov]')) { Brain.save({ provider: el.dataset.prov }); Brain.forget(); log('You', 'AI brain → ' + (el.dataset.prov === 'hermes' ? 'Hermes (free)' : 'Claude')); save(); render(); return; }
+  if (t.closest('#hKeySave')) { const k = $('#hKey').value.trim(); if (k.length < 12) { toast('The key looks too short. Use the same value as API_SERVER_KEY in Hermes.', true); return; } Brain.save({ hermesKey: k }); render(); toast('Hermes key saved on this device'); return; }
+  if (t.closest('#hMake')) { hermesGuide(Brain.makeKey()); return; }
+  if (t.closest('#hGuide')) { hermesGuide(null); return; }
+  if (t.closest('#hFall')) { Brain.save({ fallback: !Brain.cfg.fallback }); render(); return; }
+  if (t.closest('#hTest')) { const b = $('#hTest'); b.disabled = true; b.textContent = 'Testing… (free models can take a while)'; Brain.hermesTest().then(x => { toast('Hermes says: ' + (x.reply || 'ok')); Voice.speak(x.reply || 'Hermes is online.', { force: true }); }).catch(e => toast(e.message, true)).finally(() => render()); return; }
   if (t.closest('#spkChk')) { Voice.speak('Testing, one, two, three. This is Jarvis, at this volume.', { force: true }); return; }
   if (t.closest('#aiKeySave')) { const k = $('#aiKey').value.trim(); if (!/^sk-ant-/.test(k)) { toast('That doesn\'t look like a Claude API key (it starts with sk-ant-).', true); return; } Brain.save({ apiKey: k }); log('You', 'Added a Claude API key on this device'); save(); render(); toast('Key saved on this device'); return; }
   if (t.closest('#aiKeyDel')) { Brain.save({ apiKey: '' }); render(); toast('Key removed from this device'); return; }
@@ -566,6 +591,9 @@ document.addEventListener('submit', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'vLang') setVoice({ lang: t.value });
+  if (t.id === 'hModel') { Brain.save({ hermesModel: t.value }); Brain.forget(); render(); }
+  if (t.id === 'hCustom') Brain.save({ hermesCustom: t.value.trim() });
+  if (t.id === 'hUrl') Brain.save({ hermesUrl: t.value.trim() || 'http://127.0.0.1:8642' });
   if (t.id === 'aMic') { setVoice({ micId: t.value }); Voice.restartMeter(); toast('Microphone changed'); }
   if (t.id === 'aiModel') { Brain.save({ model: t.value }); Brain.forget(); log('You', 'Switched AI model to ' + Brain.modelName(t.value)); save(); render(); toast('Now using ' + Brain.modelName(t.value)); }
   if (t.id === 'aiBudget') { Brain.save({ budgetUSD: Math.max(0, +t.value || 0) }); render(); }
@@ -573,6 +601,25 @@ document.addEventListener('change', e => {
   if (t.id === 'vVoice') { setVoice({ voiceURI: t.value }); Voice.speak('This is my voice now.', { force: true }); }
 });
 document.addEventListener('input', e => { const t = e.target; if (t.id === 'vRate') setVoice({ rate: +t.value }); if (t.id === 'aSens') setVoice({ sensitivity: +t.value }); if (t.id === 'aVol') setVoice({ volume: +t.value }); if (t.id === 'vPitch') setVoice({ pitch: +t.value }); if (t.id === 'gq') gsearch(t.value); });
+function hermesGuide(newKey) {
+  const env = `API_SERVER_ENABLED=true
+API_SERVER_KEY=${newKey || '<the key you saved in Jarvis>'}
+API_SERVER_CORS_ORIGINS=https://dicksonpjo-sys.github.io`;
+  const md = modal(`<b>Connect Hermes (free NVIDIA models)</b>
+   <ol style="margin:0;padding-left:18px;display:grid;gap:8px;font-size:13px;color:var(--muted)">
+    <li><b style="color:var(--fg)">Install Hermes</b> on this PC. In PowerShell: <span class="mono" style="color:var(--fg)">iex (irm https://hermes-agent.nousresearch.com/install.ps1)</span>, or use the Hermes desktop app.</li>
+    <li><b style="color:var(--fg)">Get a free NVIDIA key</b> at build.nvidia.com → Generate API Key (starts with nvapi-).</li>
+    <li>Run <span class="mono" style="color:var(--fg)">hermes model</span> → <b style="color:var(--fg)">NVIDIA NIM</b> → paste your nvapi key → base URL <span class="mono" style="color:var(--fg)">https://integrate.api.nvidia.com/v1</span> → pick <span class="mono" style="color:var(--fg)">deepseek-ai/deepseek-v4-flash</span>.</li>
+    <li>Open the Hermes <span class="mono" style="color:var(--fg)">.env</span> file (usually <span class="mono" style="color:var(--fg)">C:\\Users\\&lt;you&gt;\\.hermes\\.env</span>) and add these three lines:</li></ol>
+   <textarea class="in" rows="4" id="envTxt" readonly>${esc(env)}</textarea>
+   <ol start="5" style="margin:0;padding-left:18px;display:grid;gap:8px;font-size:13px;color:var(--muted)">
+    <li>Run <span class="mono" style="color:var(--fg)">hermes gateway</span> and leave it running.</li>
+    <li>Back here press <b style="color:var(--fg)">Test Hermes</b>. If the browser asks to let Jarvis reach apps on this device, choose <b style="color:var(--fg)">Allow</b>.</li></ol>
+   ${newKey ? '<p class="dim" style="margin:0;font-size:12.5px">A new key was made and saved in Jarvis on this device. It is already in the lines above.</p>' : ''}
+   <div class="btns"><button class="btn go" id="envCopy">Copy the three lines</button><button class="btn" data-close>Close</button></div>`);
+  if (newKey) { Brain.save({ hermesKey: newKey }); render(); }
+  md.querySelector('#envCopy').onclick = () => copy(env, 'Copied. Paste into the Hermes .env file.');
+}
 function ideaModal() {
   const md = modal(`<b>New idea</b><form id="qIdea" style="display:grid;gap:10px"><div class="field"><input id="qT" placeholder="What's the idea?" aria-label="Idea"></div><div class="field"><select id="qB" aria-label="Business">${[...Object.keys(BIZ()), 'all', 'me'].map(k => `<option value="${k}">${esc(bizName(k))}</option>`).join('')}</select></div><div class="btns"><button class="btn go" value="idea">Add idea</button><button class="btn" value="queued">Queue for Jarvis</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
   md.querySelector('#qIdea').addEventListener('submit', ev => { ev.preventDefault(); ev.stopPropagation(); const t = $('#qT').value.trim(); if (!t) return; const i = addIdea(t, $('#qB').value, ev.submitter?.value || 'idea'); closeModal(); selectNode(GD.ix['i:' + i.id]); toast('Added to the Brain'); });
