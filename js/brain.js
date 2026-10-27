@@ -132,16 +132,27 @@ ${context}`;
   let gHistory = [];
   const GURL = 'https://generativelanguage.googleapis.com/v1beta';
   const toSchema = sc => { if (!sc || typeof sc !== 'object') return sc; const o = {}; for (const [k, v] of Object.entries(sc)) { if (k === 'type') o.type = String(v).toUpperCase(); else if (k === 'properties') o.properties = Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, toSchema(pv)])); else if (k === 'items') o.items = toSchema(v); else o[k] = v; } return o; };
+  let gAuth = 'header'; // how this key is accepted: 'header' (x-goog-api-key) or 'query' (?key=)
+  async function gFetch(path, body, mode) {
+    const url = GURL + path + (mode === 'query' ? (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(cfg.geminiKey) : '');
+    const headers = { 'content-type': 'application/json' }; if (mode === 'header') headers['x-goog-api-key'] = cfg.geminiKey;
+    return fetch(url, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined });
+  }
   async function gCall(path, body) {
     let res;
-    try { res = await fetch(GURL + path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-goog-api-key': cfg.geminiKey }, body: body ? JSON.stringify(body) : undefined }); }
-    catch { throw new Error('Couldn\'t reach Gemini. Check the internet connection.'); }
-    if (!res.ok) { let m = ''; try { m = (await res.json()).error?.message || ''; } catch {}
-      if (res.status === 400 && /API key/i.test(m)) throw new Error('Google rejected the Gemini key. Check it in Settings → AI brain.');
-      if (res.status === 403) throw new Error('This Gemini key isn\'t allowed to use that. ' + m);
-      if (res.status === 404) throw new Error(`The model "${cfg.geminiModel}" isn't available on this key. Press “Load models” and pick another.`);
-      if (res.status === 429) throw new Error('Gemini\'s free limit was hit. Wait a minute, or try a Flash-Lite model.');
-      throw new Error('Gemini error ' + res.status + (m ? ': ' + m.slice(0, 160) : '')); }
+    try {
+      res = await gFetch(path, body, gAuth);
+      if ((res.status === 400 || res.status === 401 || res.status === 403) && gAuth === 'header') {
+        const alt = await gFetch(path, body, 'query');
+        if (alt.ok) { gAuth = 'query'; res = alt; }
+      }
+    } catch { throw new Error('Couldn\'t reach Gemini. Check the internet connection.'); }
+    if (!res.ok) { let m = '', st = ''; try { const j = await res.json(); m = j.error?.message || ''; st = j.error?.status || ''; } catch {}
+      const g = m ? ' Google says: “' + m.slice(0, 220) + '”' : '';
+      if (res.status === 404 && /model/i.test(m)) throw new Error(`The model "${cfg.geminiModel}" isn't available on this key. Press “Load models” and pick another.`);
+      if (res.status === 429) throw new Error('Gemini\'s free limit was hit. Wait a minute, or try a Flash-Lite model.' + g);
+      if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error('Google refused the Gemini key (' + res.status + (st ? ' ' + st : '') + ').' + g);
+      throw new Error('Gemini error ' + res.status + '.' + g); }
     return res.json();
   }
   async function askGemini(text, { system, runTool, tools }) {
