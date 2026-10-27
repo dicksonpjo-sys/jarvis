@@ -1,5 +1,5 @@
 /* Offline cache for the Jarvis app shell. Google sign-in and Drive calls are never cached. */
-const CACHE = 'jarvis-v1.3.0';
+const CACHE = 'jarvis-v1.3.1';
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'js/config.js', 'js/drive.js', 'js/voice.js', 'js/sample.js', 'js/brain.js', 'js/app.js',
   'icons/favicon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())));
